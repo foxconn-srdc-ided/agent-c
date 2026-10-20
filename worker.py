@@ -36,7 +36,7 @@ def command(*args: str, cwd: Path | None = None, env: dict | None = None, data: 
     return result.stdout.strip()
 
 
-def model(prompt: str) -> dict:
+def model(prompt: str, required: tuple[str, ...]) -> dict:
     env = os.environ.copy()
     for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN", "CROSS_REPO_TOKEN"):
         env.pop(name, None)
@@ -55,21 +55,26 @@ def model(prompt: str) -> dict:
         if event.get("type") == "text" and isinstance(event.get("part", {}).get("text"), str):
             part = event["part"]
             messages.setdefault(part.get("messageID", "unknown"), []).append(part["text"])
-    text = "".join(next(reversed(messages.values()))) if messages else ""
     decoder = json.JSONDecoder()
     candidates = []
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-        try:
-            value, end = decoder.raw_decode(text, index)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            candidates.append((end, end - index, value))
+    for message_index, parts in enumerate(messages.values()):
+        text = "".join(parts)
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                value, end = decoder.raw_decode(text, index)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                candidates.append((message_index, end, end - index, value))
     if not candidates:
         raise RuntimeError("Model returned no JSON")
-    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+    matching = [item for item in candidates if all(key in item[3] for key in required)]
+    if not matching:
+        keys = sorted({key for item in candidates for key in item[3]})
+        raise RuntimeError(f"Model response missing {required}; available keys: {keys[:20]}")
+    return max(matching, key=lambda item: item[:3])[3]
 
 
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
@@ -120,7 +125,7 @@ def produce(payload: dict, source: str) -> dict:
               "若為 C，test_acceptance.py 必須獨立檢查六個指定案例，從環境變數 B_RESULT_DIR 取得 B 成果目錄，"
               "以 subprocess 執行 csv_stats.py，且測試需可由 python3 -m unittest -v test_acceptance 執行。"
               "不得假稱未執行的測試通過。")
-    value = model(prompt)
+    value = model(prompt, ("files", "self_check"))
     if set(value.get("files", {})) != FILES[ROLE] or not value.get("self_check", "").strip():
         raise RuntimeError("Model omitted required files or self-check")
     branch = f"runs/{payload['run_id']}"
@@ -165,7 +170,7 @@ def produce(payload: dict, source: str) -> dict:
                               "只回 JSON：{\"owner\": \"B 或 C\", \"reason\": \"具體理由\"}。\n"
                               f"B 程式：\n{(folder / 'csv_stats.py').read_text()[:20000]}\n"
                               f"C 測試：\n{(target / 'test_acceptance.py').read_text()[:20000]}\n"
-                              f"失敗輸出：\n{own.stderr[-3000:]}")
+                              f"失敗輸出：\n{own.stderr[-3000:]}", ("owner", "reason"))
             reason = f"{diagnosis.get('reason', '')}\n{own.stderr[-600:]}"
             if diagnosis.get("owner") == "B":
                 raise UpstreamDefect(reason)
@@ -192,19 +197,19 @@ def main() -> None:
         value = model(f"你是 Agent {ROLE}，提出可核對交接協議。任務：{p['task']}。"
                       f"上游成果：{source}\n前版協議：{p['agreement']}\n回饋：{p.get('feedback', '')}\n"
                       f"原已准收協議（修正卡不得削弱）：{p.get('original_agreement', '')}\n"
-                      "只回 JSON：{\"text\": \"交付範圍、驗收條件、依據資料\"}。")
+                      "只回 JSON：{\"text\": \"交付範圍、驗收條件、依據資料\"}。", ("text",))
         report = {"text": value["text"]}
     elif p["action"] == "agree":
         value = model(f"你是接收方或交付方 Agent {ROLE}。檢視協議 v{p['version']}：{p['agreement']}。"
                       f"任務：{p['task']}。上游成果：{source}\n"
-                      "只回 JSON：{\"agree\": boolean, \"text\": \"理由或具體修改建議\"}。")
+                      "只回 JSON：{\"agree\": boolean, \"text\": \"理由或具體修改建議\"}。", ("agree", "text"))
         report = {"agree": value["agree"], "text": value["text"]}
     elif p["action"] == "produce":
         report = produce(p, source)
     elif p["action"] == "review":
         value = model(f"你是接收方 Agent {ROLE}。逐項檢查協議 v{p['version']}，固定 SHA {p['sha']}。"
                       f"任務：{p['task']}\n協議：{p['agreement']}\n成果：{source}\n"
-                      "只回 JSON：{\"passed\": boolean, \"text\": \"逐項結果與證據\"}。")
+                      "只回 JSON：{\"passed\": boolean, \"text\": \"逐項結果與證據\"}。", ("passed", "text"))
         if ROLE == "C":
             prior = clone_at(p["source_repo"], p["sha"], p["run_id"])
             folder = prior / "deliverables" / p["run_id"]
