@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "model-studio/qwen3-coder-flash-2025-07-28",
+  "permission": {
+    "read": "allow", "glob": "allow", "grep": "allow",
+    "bash": "deny", "edit": "deny", "task": "deny",
+    "webfetch": "deny", "websearch": "deny", "external_directory": "deny"
+  },
+  "provider": {
+    "model-studio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Alibaba Cloud Model Studio",
+      "options": {
+        "baseURL": "{env:MODEL_STUDIO_BASE_URL}",
+        "apiKey": "{env:MODEL_STUDIO_API_KEY}"
+      },
+      "models": {
+        "qwen3-coder-flash-2025-07-28": {"name": "Qwen3 Coder Flash"}
+      }
+    }
+  }
+}

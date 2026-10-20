@@ -1,0 +1,52 @@
+name: Agent C
+on:
+  repository_dispatch:
+    types: [agent-task]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: smoke or task (task requires repository_dispatch)
+        required: true
+        default: smoke
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: agent-c-${{ github.event.client_payload.run_id || github.run_id }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: foxconn-srdc-ided
+          repositories: |
+            agent-a
+            agent-b
+            agent-c
+            agent-collaboration
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global opencode-ai@1.18.34
+      - name: Run agent or smoke
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ROLE: C
+          OPENCODE_CONFIG: ${{ github.workspace }}/opencode.json
+          MODEL_STUDIO_API_KEY: ${{ secrets.MODEL_STUDIO_API_KEY }}
+          MODEL_STUDIO_BASE_URL: ${{ vars.MODEL_STUDIO_BASE_URL }}
+        run: |
+          if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
+            opencode run --pure --format json --model model-studio/qwen3-coder-flash-2025-07-28 '請只回覆 JSON：{"ok":true}；若可使用工具，讀取 README.md 標題後回覆。' > smoke.jsonl
+            python3 -c 'import json; data=[json.loads(x) for x in open("smoke.jsonl")]; assert any(x.get("type")=="text" for x in data)'
+          else
+            python3 worker.py
+          fi
