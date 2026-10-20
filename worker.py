@@ -13,6 +13,7 @@ ORG = "foxconn-srdc-ided"
 CENTRE = f"{ORG}/agent-collaboration"
 ROLE = os.environ["ROLE"]
 REPO = {"A": "agent-a", "B": "agent-b", "C": "agent-c"}[ROLE]
+AUTOMATION_LOGIN = "ycliu-dev"
 ROOT = Path.cwd()
 FILES = {"A": {"SPEC.md"}, "B": {"csv_stats.py", "test_csv_stats.py", "README.md"},
          "C": {"REPORT.md", "test_acceptance.py"}}
@@ -37,7 +38,7 @@ def command(*args: str, cwd: Path | None = None, env: dict | None = None, data: 
 
 def model(prompt: str) -> dict:
     env = os.environ.copy()
-    for name in ("GH_TOKEN", "GITHUB_TOKEN", "APP_PRIVATE_KEY", "APP_CLIENT_ID"):
+    for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN", "CROSS_REPO_TOKEN"):
         env.pop(name, None)
     if not env.get("MODEL_STUDIO_API_KEY") or not env.get("MODEL_STUDIO_BASE_URL"):
         raise RuntimeError("Model Studio endpoint or key missing")
@@ -174,7 +175,7 @@ def produce(payload: dict, source: str) -> dict:
 
 def main() -> None:
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-    if event.get("action") != "agent-task" or event.get("sender", {}).get("type") != "Bot":
+    if event.get("action") != "agent-task" or event.get("sender", {}).get("login") != AUTOMATION_LOGIN:
         raise RuntimeError("Untrusted dispatch")
     p = event["client_payload"]
     if p["stage"] not in {"A_B", "B_C", "C_HUMAN"} and not re.fullmatch(r"B_C_FIX_[1-9][0-9]*", p["stage"]):
@@ -217,7 +218,7 @@ if __name__ == "__main__":
         try:
             event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
             payload = event.get("client_payload", {})
-            if payload.get("run_id"):
+            if payload.get("run_id") and event.get("action") == "agent-task" and event.get("sender", {}).get("login") == AUTOMATION_LOGIN:
                 action = ("upstream_defect" if isinstance(exc, UpstreamDefect) else
                           "selfcheck_failed" if isinstance(exc, SelfCheckError) else "failed")
                 send(payload, {"action": action, "failed_action": payload.get("action", ""),

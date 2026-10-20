@@ -18,20 +18,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/create-github-app-token@v3
-        id: app
-        with:
-          client-id: ${{ vars.APP_CLIENT_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: foxconn-srdc-ided
-          repositories: |
-            agent-a
-            agent-b
-            agent-c
-            agent-collaboration
       - uses: actions/checkout@v4
         with:
-          token: ${{ steps.app.outputs.token }}
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -39,14 +28,14 @@ jobs:
       - run: npm install --global opencode-ai@1.18.34
       - name: Run agent or smoke
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
           ROLE: C
           OPENCODE_CONFIG: ${{ github.workspace }}/opencode.json
           MODEL_STUDIO_API_KEY: ${{ secrets.MODEL_STUDIO_API_KEY }}
           MODEL_STUDIO_BASE_URL: ${{ vars.MODEL_STUDIO_BASE_URL }}
         run: |
           if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
-            opencode run --pure --format json --model model-studio/qwen3-coder-flash-2025-07-28 '請先用 read 工具讀取 README.md，再以 JSON 回覆其中的標題與 ok=true。' > smoke.jsonl
+            env -u GH_TOKEN -u GITHUB_TOKEN opencode run --pure --format json --model model-studio/qwen3-coder-flash-2025-07-28 '請先用 read 工具讀取 README.md，再以 JSON 回覆其中的標題與 ok=true。' > smoke.jsonl
             python3 -c 'import json; data=[json.loads(x) for x in open("smoke.jsonl")]; assert any(x.get("type")=="tool_use" and x.get("part",{}).get("state",{}).get("status")=="completed" for x in data); assert any(x.get("type")=="text" for x in data)'
           else
             python3 worker.py
