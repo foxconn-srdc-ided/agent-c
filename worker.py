@@ -303,13 +303,19 @@ def main() -> None:
             raise ModelFormatError("Agreement proposal is incomplete or omitted feedback")
         report = {"text": value["text"]}
     elif p["action"] == "agree":
-        value = model(f"你是 Agent {ROLE}，現在只負責檢查交接協議，尚未實作或交付。"
+        agree_prompt = (f"你是 Agent {ROLE}，現在只負責檢查交接協議，尚未實作或交付。"
                       f"檢視協議 v{p['version']}：{p['agreement']}。"
-                      f"原任務：{p['task']}。上游成果：{source}\n"
+                      f"原任務：{p['task']}。以下已附上固定 SHA 的上游成果，無需在本機找檔案：{source}\n"
                       "請判斷協議是否具體、可驗收且符合原任務；同意則 agree=true，"
                       "不同意則 agree=false 並指出協議本身的具體缺漏。"
                       "JSON 只是向流程控制器回報判斷的格式，不是交付成果，也不會改變原任務。"
-                      "只回傳含 agree 布林值與 text 理由字串的 JSON 物件。", ("agree", "text"))
+                      "只回傳含 agree 布林值與 text 理由字串的 JSON 物件。")
+        value = model(agree_prompt, ("agree", "text"))
+        if "### SPEC.md" in source and re.search(r"SPEC\.md.{0,30}(不存在|未提供|未找到)|缺乏 SPEC\.md", value["text"]):
+            value = model_json_mode(agree_prompt + "\n你誤判了：上游成果以 ### SPEC.md 開頭，請依已提供的內容重新判斷。",
+                                    ("agree", "text"))
+            if re.search(r"SPEC\.md.{0,30}(不存在|未提供|未找到)|缺乏 SPEC\.md", value["text"]):
+                raise ModelFormatError("Agreement review ignored provided SPEC.md")
         report = {"agree": value["agree"], "text": value["text"]}
     elif p["action"] == "produce":
         report = produce(p, source)
