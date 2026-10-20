@@ -177,7 +177,7 @@ def main() -> None:
     if event.get("action") != "agent-task" or event.get("sender", {}).get("type") != "Bot":
         raise RuntimeError("Untrusted dispatch")
     p = event["client_payload"]
-    if p["stage"] not in {"A_B", "B_C", "C_HUMAN"}:
+    if p["stage"] not in {"A_B", "B_C", "C_HUMAN"} and not re.fullmatch(r"B_C_FIX_[1-9][0-9]*", p["stage"]):
         raise RuntimeError("Unknown stage")
     source = context(p)
     if p["action"] in {"propose", "amend"}:
