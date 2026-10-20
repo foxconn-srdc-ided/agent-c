@@ -148,6 +148,24 @@ def valid_proposal(text: object, payload: dict) -> bool:
     return True
 
 
+def spec_problems(spec: str) -> list[str]:
+    problems = []
+    examples = re.findall(r"```json\s*\n(.*?)```", spec, re.I | re.S)
+    parsed = []
+    for index, block in enumerate(examples, 1):
+        try:
+            parsed.append(json.loads(block))
+        except json.JSONDecodeError:
+            problems.append(f"第 {index} 個 JSON 範例不可解析")
+    if not any(isinstance(item, dict) and item.get("total_count", 0) > 0 for item in parsed):
+        problems.append("缺少正常輸入的具體 JSON 輸出範例")
+    if not re.search(r"category,amount\s*\n[^\n]+\n[^\n]+", spec):
+        problems.append("缺少至少兩筆資料的正常 CSV 輸入範例")
+    if "stderr" not in spec or not re.search(r"非零|退出碼|exit code", spec, re.I):
+        problems.append("缺少 CLI 錯誤輸出及退出碼說明")
+    return problems
+
+
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Missing fixed source SHA")
@@ -201,6 +219,11 @@ def produce(payload: dict, source: str) -> dict:
     value = model(prompt, ("files", "self_check"))
     if set(value.get("files", {})) != FILES[ROLE] or not value.get("self_check", "").strip():
         raise RuntimeError("Model omitted required files or self-check")
+    if ROLE == "A" and spec_problems(value["files"]["SPEC.md"]):
+        value = model_json_mode(prompt + "\n上次規格含不可解析 JSON 或缺少正常 CSV/JSON 範例；請完整重寫。",
+                                ("files", "self_check"))
+        if set(value.get("files", {})) != FILES[ROLE] or spec_problems(value["files"]["SPEC.md"]):
+            raise ModelFormatError("A spec is incomplete: " + "; ".join(spec_problems(value.get("files", {}).get("SPEC.md", ""))))
     branch = f"runs/{payload['run_id']}"
     command("git", "fetch", "origin", "main", cwd=ROOT)
     existing = subprocess.run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
@@ -291,11 +314,22 @@ def main() -> None:
     elif p["action"] == "produce":
         report = produce(p, source)
     elif p["action"] == "review":
-        value = model(f"你是接收方 Agent {ROLE}。逐項檢查協議 v{p['version']}，固定 SHA {p['sha']}。"
+        review_prompt = (f"你是接收方 Agent {ROLE}。逐項檢查協議 v{p['version']}，固定 SHA {p['sha']}。"
                       f"任務：{p['task']}\n協議：{p['agreement']}\n成果：{source}\n"
-                      "若本關上家是 A，成果僅有 SPEC.md；只能審查規格文字，"
+                      "成果文字已附在上方，無需在本機工作目錄尋找。若本關上家是 A，成果僅有 SPEC.md；只能審查規格文字，"
                       "不可宣稱 CLI 已實作、已執行測試或檢查不存在的檔案。"
-                      "只回 JSON：{\"passed\": boolean, \"text\": \"逐項結果與證據\"}。", ("passed", "text"))
+                      "只回 JSON：{\"passed\": boolean, \"text\": \"逐項結果與證據\"}。")
+        value = model(review_prompt, ("passed", "text"))
+        if p["stage"] == "A_B" and "### SPEC.md" in source and "未找到 SPEC.md" in value["text"]:
+            value = model_json_mode(review_prompt + "\n你誤判了：成果文字以 ### SPEC.md 開頭，請依其內容重新審查。",
+                                    ("passed", "text"))
+            if "未找到 SPEC.md" in value["text"]:
+                raise ModelFormatError("Review ignored the provided SPEC.md")
+        if p["stage"] == "A_B":
+            problems = spec_problems(source.split("### SPEC.md\n", 1)[-1])
+            if problems:
+                value["passed"] = False
+                value["text"] += "\n固定規格檢查：" + "；".join(problems)
         if p["stage"] == "A_B" and value["passed"] and re.search(
                 r"已實作|已執行測試|測試結果.*通過|已針對.{0,100}進行測試", value["text"], re.S):
             value["passed"] = False

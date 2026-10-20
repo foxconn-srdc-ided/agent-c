@@ -11,6 +11,15 @@ import worker
 
 
 class WorkerModelTests(unittest.TestCase):
+    def test_spec_examples_are_parseable_and_cover_normal_input(self):
+        invalid = ('```json\n{"total_count": int}\n```\n'
+                   'category,amount\na,1.00\nb,2.00\nstderr 非零退出碼')
+        self.assertIn('第 1 個 JSON 範例不可解析', worker.spec_problems(invalid))
+        valid = ('category,amount\na,1.00\nb,2.00\n'
+                 '```json\n{"total_count":2,"total_amount":"3.00","category_stats":{}}\n```\n'
+                 'stderr 非零退出碼')
+        self.assertEqual(worker.spec_problems(valid), [])
+
     def test_amendment_requires_concrete_feedback(self):
         payload = {"stage": "A_B", "feedback": "JSON 金額 Decimal 與錯誤行為"}
         self.assertFalse(worker.valid_proposal("交付範圍、驗收條件、依據資料", payload))
