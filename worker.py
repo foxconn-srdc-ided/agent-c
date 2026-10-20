@@ -193,6 +193,8 @@ def produce(payload: dict, source: str) -> dict:
               f"退件原因：{payload.get('feedback', '')}\n"
               f"只輸出 JSON，格式 {{\"files\": {{filename: content}}, \"self_check\": string}}。"
               f"files 必須剛好包含 {sorted(FILES[ROLE])}。內容使用繁體中文說明；程式使用 Python 標準函式庫。"
+              "若為 A，SPEC.md 須給出缺欄位及非法金額時 stderr 的確切文字範例與非零退出碼；"
+              "JSON 範例必須可解析，並且不得聲稱尚未執行的測試已通過。"
               "若為 C，test_acceptance.py 必須獨立檢查六個指定案例，從環境變數 B_RESULT_DIR 取得 B 成果目錄，"
               "以 subprocess 執行 csv_stats.py，且測試需可由 python3 -m unittest -v test_acceptance 執行。"
               "不得假稱未執行的測試通過。")
@@ -291,7 +293,13 @@ def main() -> None:
     elif p["action"] == "review":
         value = model(f"你是接收方 Agent {ROLE}。逐項檢查協議 v{p['version']}，固定 SHA {p['sha']}。"
                       f"任務：{p['task']}\n協議：{p['agreement']}\n成果：{source}\n"
+                      "若本關上家是 A，成果僅有 SPEC.md；只能審查規格文字，"
+                      "不可宣稱 CLI 已實作、已執行測試或檢查不存在的檔案。"
                       "只回 JSON：{\"passed\": boolean, \"text\": \"逐項結果與證據\"}。", ("passed", "text"))
+        if p["stage"] == "A_B" and value["passed"] and re.search(
+                r"已實作|已執行測試|測試結果.*通過|已針對.{0,100}進行測試", value["text"], re.S):
+            value["passed"] = False
+            value["text"] += "\n審查聲稱了規格交付階段不存在的實作或測試證據，須重新核對 SPEC.md。"
         if ROLE == "C":
             prior = clone_at(p["source_repo"], p["sha"], p["run_id"])
             folder = prior / "deliverables" / p["run_id"]
