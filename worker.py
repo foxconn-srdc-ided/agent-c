@@ -56,13 +56,20 @@ def model(prompt: str) -> dict:
             part = event["part"]
             messages.setdefault(part.get("messageID", "unknown"), []).append(part["text"])
     text = "".join(next(reversed(messages.values()))) if messages else ""
-    match = re.search(r"\{.*\}", text, re.S)
-    if not match:
+    decoder = json.JSONDecoder()
+    candidates = []
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            candidates.append((end, end - index, value))
+    if not candidates:
         raise RuntimeError("Model returned no JSON")
-    value = json.loads(match.group())
-    if not isinstance(value, dict):
-        raise RuntimeError("Model response is not an object")
-    return value
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
