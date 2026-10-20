@@ -278,9 +278,13 @@ def main() -> None:
             raise ModelFormatError("Agreement proposal is incomplete or omitted feedback")
         report = {"text": value["text"]}
     elif p["action"] == "agree":
-        value = model(f"你是接收方或交付方 Agent {ROLE}。檢視協議 v{p['version']}：{p['agreement']}。"
-                      f"任務：{p['task']}。上游成果：{source}\n"
-                      "只回 JSON：{\"agree\": boolean, \"text\": \"理由或具體修改建議\"}。", ("agree", "text"))
+        value = model(f"你是 Agent {ROLE}，現在只負責檢查交接協議，尚未實作或交付。"
+                      f"檢視協議 v{p['version']}：{p['agreement']}。"
+                      f"原任務：{p['task']}。上游成果：{source}\n"
+                      "請判斷協議是否具體、可驗收且符合原任務；同意則 agree=true，"
+                      "不同意則 agree=false 並指出協議本身的具體缺漏。"
+                      "JSON 只是向流程控制器回報判斷的格式，不是交付成果，也不會改變原任務。"
+                      "只回傳含 agree 布林值與 text 理由字串的 JSON 物件。", ("agree", "text"))
         report = {"agree": value["agree"], "text": value["text"]}
     elif p["action"] == "produce":
         report = produce(p, source)
