@@ -175,6 +175,17 @@ def invents_unrequired_cases(text: str) -> bool:
     return any(item in text for item in ("空檔案", "多餘欄位", "跨平台", "不同平台"))
 
 
+def b_files_problems(files: dict) -> list[str]:
+    code = files.get("csv_stats.py", "")
+    tests = files.get("test_csv_stats.py", "")
+    problems = []
+    if not re.search(r"\bjson\.(?:dump|dumps)\s*\(", code):
+        problems.append("CLI 必須用 json.dump/json.dumps 輸出 JSON")
+    if re.search(r"(?<!\w)eval\s*\(", tests) or not re.search(r"\bjson\.loads\s*\(", tests):
+        problems.append("測試必須以 json.loads 解析 stdout，不可使用 eval")
+    return problems
+
+
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Missing fixed source SHA")
@@ -222,6 +233,8 @@ def produce(payload: dict, source: str) -> dict:
               f"files 必須剛好包含 {sorted(FILES[ROLE])}。內容使用繁體中文說明；程式使用 Python 標準函式庫。"
               "若為 A，SPEC.md 須給出缺欄位及非法金額時 stderr 的確切文字範例與非零退出碼；"
               "JSON 範例必須可解析，並且不得聲稱尚未執行的測試已通過。"
+              "若為 B，csv_stats.py 必須使用 json.dumps/json.dump 輸出真正 JSON；"
+              "test_csv_stats.py 必須用 json.loads 驗證 stdout，不得用 eval。"
               "若為 C，test_acceptance.py 必須獨立檢查六個指定案例，從環境變數 B_RESULT_DIR 取得 B 成果目錄，"
               "以 subprocess 執行 csv_stats.py，且測試需可由 python3 -m unittest -v test_acceptance 執行。"
               "不得假稱未執行的測試通過。")
@@ -233,6 +246,13 @@ def produce(payload: dict, source: str) -> dict:
                                 ("files", "self_check"))
         if set(value.get("files", {})) != FILES[ROLE] or spec_problems(value["files"]["SPEC.md"]):
             raise ModelFormatError("A spec is incomplete: " + "; ".join(spec_problems(value.get("files", {}).get("SPEC.md", ""))))
+    if ROLE == "B" and b_files_problems(value["files"]):
+        value = model_json_mode(prompt + "\n上次 CLI 使用 Python repr 或測試使用 eval，無法驗證 JSON；請完整重寫。",
+                                ("files", "self_check"))
+        if (set(value.get("files", {})) != FILES[ROLE] or
+                not str(value.get("self_check", "")).strip() or b_files_problems(value["files"])):
+            raise ModelFormatError("B output is not JSON-verified: " +
+                                   "; ".join(b_files_problems(value.get("files", {}))))
     branch = f"runs/{payload['run_id']}"
     command("git", "fetch", "origin", "main", cwd=ROOT)
     existing = subprocess.run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
@@ -255,6 +275,24 @@ def produce(payload: dict, source: str) -> dict:
         evidence += f"\nFixed test command exit={result.returncode}:\n{result.stderr[-3000:]}"
         if result.returncode:
             raise SelfCheckError("B fixed tests failed: " + result.stderr[-600:])
+        sample = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8")
+        try:
+            sample.write("category,amount\n食品,100.00\n交通,100.25\n食品,50.00\n")
+            sample.close()
+            cli = subprocess.run([sys.executable, "csv_stats.py", sample.name], cwd=target,
+                                 capture_output=True, text=True, timeout=30)
+        finally:
+            Path(sample.name).unlink(missing_ok=True)
+        try:
+            actual = json.loads(cli.stdout)
+        except json.JSONDecodeError:
+            actual = None
+        expected = {"total_count": 3, "total_amount": "250.25",
+                    "category_stats": {"食品": {"count": 2, "amount": "150.00"},
+                                       "交通": {"count": 1, "amount": "100.25"}}}
+        if cli.returncode != 0 or actual != expected:
+            raise ModelFormatError("B CLI failed independent JSON and value check")
+        evidence += "\nIndependent CLI JSON sample exit=0 and values match fixed SPEC."
     if ROLE == "C":
         prior = clone_at(payload["previous_repo"], payload["previous_sha"], payload["run_id"])
         folder = prior / "deliverables" / payload["run_id"]

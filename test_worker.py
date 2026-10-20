@@ -11,6 +11,13 @@ import worker
 
 
 class WorkerModelTests(unittest.TestCase):
+    def test_b_files_must_emit_and_assert_json(self):
+        self.assertEqual(worker.b_files_problems({"csv_stats.py": "print(json.dumps(result))",
+                                                  "test_csv_stats.py": "json.loads(result.stdout)"}), [])
+        problems = worker.b_files_problems({"csv_stats.py": "print(result)",
+                                           "test_csv_stats.py": "eval(result.stdout)"})
+        self.assertEqual(len(problems), 2)
+
     def test_rejects_added_requirements_outside_arbitration(self):
         self.assertTrue(worker.invents_unrequired_cases("需支援空檔案與多餘欄位"))
         self.assertFalse(worker.invents_unrequired_cases("核對正常、負金額與非法金額"))
