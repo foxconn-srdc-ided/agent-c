@@ -27,6 +27,15 @@ class UpstreamDefect(RuntimeError):
     pass
 
 
+def safe_error(value: object) -> str:
+    message = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
+    for name in ("MODEL_STUDIO_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"):
+        secret = os.environ.get(name)
+        if secret:
+            message = message.replace(secret, "[redacted]")
+    return message[:500]
+
+
 def command(*args: str, cwd: Path | None = None, env: dict | None = None, data: str | None = None,
             timeout: int = 1200) -> str:
     result = subprocess.run(args, cwd=cwd, env=env, input=data, text=True,
@@ -51,7 +60,7 @@ def model(prompt: str, required: tuple[str, ...]) -> dict:
         except json.JSONDecodeError:
             continue
         if event.get("type") == "error":
-            raise RuntimeError(f"OpenCode error: {str(event.get('error'))[-800:]}")
+            raise RuntimeError(f"OpenCode error: {safe_error(event.get('error'))}")
         if event.get("type") == "text" and isinstance(event.get("part", {}).get("text"), str):
             part = event["part"]
             messages.setdefault(part.get("messageID", "unknown"), []).append(part["text"])
@@ -72,6 +81,9 @@ def model(prompt: str, required: tuple[str, ...]) -> dict:
         raise RuntimeError("Model returned no JSON")
     matching = [item for item in candidates if all(key in item[3] for key in required)]
     if not matching:
+        errors = [item[3] for item in candidates if "error" in item[3] or item[3].get("type") == "error"]
+        if errors:
+            raise RuntimeError(f"Model error: {safe_error(errors[-1])}")
         keys = sorted({key for item in candidates for key in item[3]})
         raise RuntimeError(f"Model response missing {required}; available keys: {keys[:20]}")
     return max(matching, key=lambda item: item[:3])[3]
