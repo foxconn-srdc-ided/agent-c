@@ -183,6 +183,9 @@ def b_files_problems(files: dict) -> list[str]:
         problems.append("CLI 必須用 json.dump/json.dumps 輸出 JSON")
     if re.search(r"(?<!\w)eval\s*\(", tests) or not re.search(r"\bjson\.loads\s*\(", tests):
         problems.append("測試必須以 json.loads 解析 stdout，不可使用 eval")
+    for message in ("錯誤：CSV 檔案缺少必要欄位。", "錯誤：金額格式無效。"):
+        if message not in code or message not in tests:
+            problems.append(f"CLI 與測試都須核對固定 stderr 文字：{message}")
     return problems
 
 
@@ -235,6 +238,8 @@ def produce(payload: dict, source: str) -> dict:
               "JSON 範例必須可解析，並且不得聲稱尚未執行的測試已通過。"
               "若為 B，csv_stats.py 必須使用 json.dumps/json.dump 輸出真正 JSON；"
               "test_csv_stats.py 必須用 json.loads 驗證 stdout，不得用 eval。"
+              "缺欄位及非法金額的 stderr 必須分別完整包含「錯誤：CSV 檔案缺少必要欄位。」"
+              "與「錯誤：金額格式無效。」；B 程式及測試均須核對。"
               "若為 C，test_acceptance.py 必須獨立檢查六個指定案例，從環境變數 B_RESULT_DIR 取得 B 成果目錄，"
               "以 subprocess 執行 csv_stats.py，且測試需可由 python3 -m unittest -v test_acceptance 執行。"
               "不得假稱未執行的測試通過。")
@@ -247,7 +252,7 @@ def produce(payload: dict, source: str) -> dict:
         if set(value.get("files", {})) != FILES[ROLE] or spec_problems(value["files"]["SPEC.md"]):
             raise ModelFormatError("A spec is incomplete: " + "; ".join(spec_problems(value.get("files", {}).get("SPEC.md", ""))))
     if ROLE == "B" and b_files_problems(value["files"]):
-        value = model_json_mode(prompt + "\n上次 CLI 使用 Python repr 或測試使用 eval，無法驗證 JSON；請完整重寫。",
+        value = model_json_mode(prompt + "\n上次 B 程式/測試缺少真正 JSON 或固定 stderr 文字；請完整重寫。",
                                 ("files", "self_check"))
         if (set(value.get("files", {})) != FILES[ROLE] or
                 not str(value.get("self_check", "")).strip() or b_files_problems(value["files"])):
@@ -272,6 +277,20 @@ def produce(payload: dict, source: str) -> dict:
     if ROLE == "B":
         result = subprocess.run(["python3", "-m", "unittest", "-v", "test_csv_stats"],
                                 cwd=target, capture_output=True, text=True, timeout=120)
+        if result.returncode:
+            retry = model_json_mode(prompt + "\n剛產出的檔案已執行六項固定測試，但未通過。"
+                                    "請依失敗輸出完整重寫三個檔案，不可宣稱已通過：\n" + result.stderr[-2500:],
+                                    ("files", "self_check"))
+            if (set(retry.get("files", {})) != FILES[ROLE] or
+                    not str(retry.get("self_check", "")).strip() or b_files_problems(retry["files"])):
+                raise ModelFormatError("B retry omitted required files, JSON validation, or stderr text")
+            for name, content in retry["files"].items():
+                if not isinstance(content, str) or not content.strip() or len(content) > 100_000:
+                    raise ModelFormatError("B retry returned invalid file content")
+                (target / name).write_text(content.rstrip() + "\n")
+            evidence = retry["self_check"] + "\nRegenerated after first fixed test failure."
+            result = subprocess.run(["python3", "-m", "unittest", "-v", "test_csv_stats"],
+                                    cwd=target, capture_output=True, text=True, timeout=120)
         evidence += f"\nFixed test command exit={result.returncode}:\n{result.stderr[-3000:]}"
         if result.returncode:
             raise SelfCheckError("B fixed tests failed: " + result.stderr[-600:])

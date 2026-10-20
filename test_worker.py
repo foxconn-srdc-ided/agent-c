@@ -12,11 +12,12 @@ import worker
 
 class WorkerModelTests(unittest.TestCase):
     def test_b_files_must_emit_and_assert_json(self):
-        self.assertEqual(worker.b_files_problems({"csv_stats.py": "print(json.dumps(result))",
-                                                  "test_csv_stats.py": "json.loads(result.stdout)"}), [])
+        messages = "錯誤：CSV 檔案缺少必要欄位。 錯誤：金額格式無效。"
+        self.assertEqual(worker.b_files_problems({"csv_stats.py": "print(json.dumps(result)) " + messages,
+                                                  "test_csv_stats.py": "json.loads(result.stdout) " + messages}), [])
         problems = worker.b_files_problems({"csv_stats.py": "print(result)",
                                            "test_csv_stats.py": "eval(result.stdout)"})
-        self.assertEqual(len(problems), 2)
+        self.assertEqual(len(problems), 4)
 
     def test_rejects_added_requirements_outside_arbitration(self):
         self.assertTrue(worker.invents_unrequired_cases("需支援空檔案與多餘欄位"))
