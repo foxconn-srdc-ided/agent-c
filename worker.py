@@ -79,7 +79,7 @@ def send(payload: dict, report: dict) -> None:
     fields = {"run_id": payload["run_id"], "stage": payload["stage"], "version": payload["version"],
               "attempt": payload["attempt"], "action": payload["action"], "role": ROLE, "repo": REPO,
               "report_id": str(uuid.uuid4()), **report}
-    body = json.dumps({"event_type": "agent-report", "client_payload": fields}, ensure_ascii=False)
+    body = json.dumps({"event_type": "agent-report", "client_payload": {"report": fields}}, ensure_ascii=False)
     command("gh", "api", f"repos/{CENTRE}/dispatches", "-X", "POST", "--input", "-", data=body)
 
 
@@ -177,7 +177,7 @@ def main() -> None:
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     if event.get("action") != "agent-task" or event.get("sender", {}).get("login") != AUTOMATION_LOGIN:
         raise RuntimeError("Untrusted dispatch")
-    p = event["client_payload"]
+    p = event["client_payload"]["task"]
     if p["stage"] not in {"A_B", "B_C", "C_HUMAN"} and not re.fullmatch(r"B_C_FIX_[1-9][0-9]*", p["stage"]):
         raise RuntimeError("Unknown stage")
     source = context(p)
@@ -217,7 +217,7 @@ if __name__ == "__main__":
     except Exception as exc:
         try:
             event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-            payload = event.get("client_payload", {})
+            payload = event.get("client_payload", {}).get("task", {})
             if payload.get("run_id") and event.get("action") == "agent-task" and event.get("sender", {}).get("login") == AUTOMATION_LOGIN:
                 action = ("upstream_defect" if isinstance(exc, UpstreamDefect) else
                           "selfcheck_failed" if isinstance(exc, SelfCheckError) else "failed")
