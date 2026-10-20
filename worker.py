@@ -166,6 +166,11 @@ def spec_problems(spec: str) -> list[str]:
     return problems
 
 
+def claims_missing_spec(text: str) -> bool:
+    return bool(re.search(r"(?:找不到|未找到|不存在|未提供|缺乏|沒有).{0,30}SPEC\.md|"
+                          r"SPEC\.md.{0,30}(?:不存在|未提供|未找到|缺乏)", text))
+
+
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Missing fixed source SHA")
@@ -311,10 +316,10 @@ def main() -> None:
                       "JSON 只是向流程控制器回報判斷的格式，不是交付成果，也不會改變原任務。"
                       "只回傳含 agree 布林值與 text 理由字串的 JSON 物件。")
         value = model(agree_prompt, ("agree", "text"))
-        if "### SPEC.md" in source and re.search(r"SPEC\.md.{0,30}(不存在|未提供|未找到)|缺乏 SPEC\.md", value["text"]):
+        if "### SPEC.md" in source and claims_missing_spec(value["text"]):
             value = model_json_mode(agree_prompt + "\n你誤判了：上游成果以 ### SPEC.md 開頭，請依已提供的內容重新判斷。",
                                     ("agree", "text"))
-            if re.search(r"SPEC\.md.{0,30}(不存在|未提供|未找到)|缺乏 SPEC\.md", value["text"]):
+            if claims_missing_spec(value["text"]):
                 raise ModelFormatError("Agreement review ignored provided SPEC.md")
         report = {"agree": value["agree"], "text": value["text"]}
     elif p["action"] == "produce":
@@ -326,10 +331,10 @@ def main() -> None:
                       "不可宣稱 CLI 已實作、已執行測試或檢查不存在的檔案。"
                       "只回 JSON：{\"passed\": boolean, \"text\": \"逐項結果與證據\"}。")
         value = model(review_prompt, ("passed", "text"))
-        if p["stage"] == "A_B" and "### SPEC.md" in source and "未找到 SPEC.md" in value["text"]:
+        if p["stage"] == "A_B" and "### SPEC.md" in source and claims_missing_spec(value["text"]):
             value = model_json_mode(review_prompt + "\n你誤判了：成果文字以 ### SPEC.md 開頭，請依其內容重新審查。",
                                     ("passed", "text"))
-            if "未找到 SPEC.md" in value["text"]:
+            if claims_missing_spec(value["text"]):
                 raise ModelFormatError("Review ignored the provided SPEC.md")
         if p["stage"] == "A_B":
             problems = spec_problems(source.split("### SPEC.md\n", 1)[-1])

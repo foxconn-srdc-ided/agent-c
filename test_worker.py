@@ -11,6 +11,11 @@ import worker
 
 
 class WorkerModelTests(unittest.TestCase):
+    def test_detects_false_missing_spec_claims(self):
+        self.assertTrue(worker.claims_missing_spec("找不到 SPEC.md 檔案"))
+        self.assertTrue(worker.claims_missing_spec("SPEC.md 不存在"))
+        self.assertFalse(worker.claims_missing_spec("已核對 SPEC.md 的輸出範例"))
+
     def test_spec_examples_are_parseable_and_cover_normal_input(self):
         invalid = ('```json\n{"total_count": int}\n```\n'
                    'category,amount\na,1.00\nb,2.00\nstderr 非零退出碼')
