@@ -196,7 +196,8 @@ if __name__ == "__main__":
             payload = event.get("client_payload", {})
             if payload.get("run_id"):
                 action = "selfcheck_failed" if isinstance(exc, SelfCheckError) else "failed"
-                send(payload, {"action": action, "text": str(exc)[-700:]})
+                send(payload, {"action": action, "failed_action": payload.get("action", ""),
+                               "text": str(exc)[-700:]})
         except Exception:
             pass
         print(str(exc), file=sys.stderr)
