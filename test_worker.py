@@ -11,6 +11,10 @@ import worker
 
 
 class WorkerModelTests(unittest.TestCase):
+    def test_rejects_added_requirements_outside_arbitration(self):
+        self.assertTrue(worker.invents_unrequired_cases("需支援空檔案與多餘欄位"))
+        self.assertFalse(worker.invents_unrequired_cases("核對正常、負金額與非法金額"))
+
     def test_detects_false_missing_spec_claims(self):
         self.assertTrue(worker.claims_missing_spec("找不到 SPEC.md 檔案"))
         self.assertTrue(worker.claims_missing_spec("SPEC.md 不存在"))

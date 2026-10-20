@@ -171,6 +171,10 @@ def claims_missing_spec(text: str) -> bool:
                           r"SPEC\.md.{0,30}(?:不存在|未提供|未找到|缺乏)", text))
 
 
+def invents_unrequired_cases(text: str) -> bool:
+    return any(item in text for item in ("空檔案", "多餘欄位", "跨平台", "不同平台"))
+
+
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Missing fixed source SHA")
@@ -313,6 +317,8 @@ def main() -> None:
                       f"原任務：{p['task']}。以下已附上固定 SHA 的上游成果，無需在本機找檔案：{source}\n"
                       "請判斷協議是否具體、可驗收且符合原任務；同意則 agree=true，"
                       "不同意則 agree=false 並指出協議本身的具體缺漏。"
+                      "人工裁決後只能依裁決文字與已准收的上游規格判斷，"
+                      "不得自行增加空檔案、多餘欄位、跨平台等未列明的驗收要求。"
                       "JSON 只是向流程控制器回報判斷的格式，不是交付成果，也不會改變原任務。"
                       "只回傳含 agree 布林值與 text 理由字串的 JSON 物件。")
         value = model(agree_prompt, ("agree", "text"))
@@ -321,6 +327,11 @@ def main() -> None:
                                     ("agree", "text"))
             if claims_missing_spec(value["text"]):
                 raise ModelFormatError("Agreement review ignored provided SPEC.md")
+        if p["stage"] == "B_C" and not value["agree"] and invents_unrequired_cases(value["text"]):
+            value = model_json_mode(agree_prompt + "\n先前拒絕理由新增了裁決與規格未要求的案例；請僅依現有範圍重新判斷。",
+                                    ("agree", "text"))
+            if not value["agree"] and invents_unrequired_cases(value["text"]):
+                raise ModelFormatError("Agreement review invented out-of-scope requirements")
         report = {"agree": value["agree"], "text": value["text"]}
     elif p["action"] == "produce":
         report = produce(p, source)
