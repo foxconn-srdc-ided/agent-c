@@ -363,6 +363,29 @@ def main() -> None:
                                   cwd=folder, capture_output=True, text=True, timeout=120)
             value["text"] += f"\n固定測試 exit={test.returncode}:\n{test.stderr[-3000:]}"
             value["passed"] = bool(value["passed"] and test.returncode == 0)
+            sample = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8")
+            try:
+                sample.write("category,amount\n食品,100.00\n交通,100.25\n食品,50.00\n")
+                sample.close()
+                cli = subprocess.run([sys.executable, "csv_stats.py", sample.name], cwd=folder,
+                                     capture_output=True, text=True, timeout=30)
+            finally:
+                Path(sample.name).unlink(missing_ok=True)
+            expected = {"total_count": 3, "total_amount": "250.25",
+                        "category_stats": {"食品": {"count": 2, "amount": "150.00"},
+                                           "交通": {"count": 1, "amount": "100.25"}}}
+            try:
+                actual = json.loads(cli.stdout)
+            except json.JSONDecodeError:
+                actual = None
+            if cli.returncode != 0 or actual != expected:
+                value["passed"] = False
+                value["text"] += ("\n獨立 CLI JSON 檢查未通過：正常樣本須 exit=0 並輸出可解析、"
+                                  "與固定規格相符的 JSON；目前 exit=" + str(cli.returncode) +
+                                  ("，stdout 非 JSON。" if actual is None else "，JSON 值不符。"))
+            if re.search(r"(?<!\w)eval\s*\(", (folder / "test_csv_stats.py").read_text()):
+                value["passed"] = False
+                value["text"] += "\nB 測試使用 eval() 解析 Python repr，未驗證 CLI 輸出為 JSON。"
         report = {"sha": p["sha"], "passed": value["passed"], "text": value["text"]}
     else:
         raise RuntimeError("Unknown action")
