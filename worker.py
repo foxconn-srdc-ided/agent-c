@@ -138,6 +138,16 @@ def model_json_mode(prompt: str, required: tuple[str, ...]) -> dict:
     return value
 
 
+def valid_proposal(text: object, payload: dict) -> bool:
+    if not isinstance(text, str) or len(text.strip()) < 120:
+        return False
+    if text.strip() == "交付範圍、驗收條件、依據資料":
+        return False
+    if payload["stage"] == "A_B" and payload.get("feedback"):
+        return all(item in text for item in ('Decimal', 'JSON', '"0.00"', '缺欄位', '非法金額', '非零'))
+    return True
+
+
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Missing fixed source SHA")
@@ -255,10 +265,17 @@ def main() -> None:
         raise RuntimeError("Unknown stage")
     source = context(p)
     if p["action"] in {"propose", "amend"}:
-        value = model(f"你是 Agent {ROLE}，提出可核對交接協議。任務：{p['task']}。"
+        prompt = (f"你是 Agent {ROLE}，提出可核對交接協議。任務：{p['task']}。"
                       f"上游成果：{source}\n前版協議：{p['agreement']}\n回饋：{p.get('feedback', '')}\n"
                       f"原已准收協議（修正卡不得削弱）：{p.get('original_agreement', '')}\n"
-                      "只回 JSON：{\"text\": \"交付範圍、驗收條件、依據資料\"}。", ("text",))
+                      "只回一個 JSON 物件，鍵名為 text；值須是完整、具體、可驗收的協議，包含交付範圍、"
+                      "驗收條件及依據資料。改約時保留前版有效條件，逐項納入回饋。"
+                      "不得回傳標題列表、範本或佔位文字。")
+        value = model(prompt, ("text",))
+        if not valid_proposal(value["text"], p):
+            value = model_json_mode(prompt + "\n上一版回答不符合協議內容或未完整納入回饋；請重寫。", ("text",))
+        if not valid_proposal(value["text"], p):
+            raise ModelFormatError("Agreement proposal is incomplete or omitted feedback")
         report = {"text": value["text"]}
     elif p["action"] == "agree":
         value = model(f"你是接收方或交付方 Agent {ROLE}。檢視協議 v{p['version']}：{p['agreement']}。"

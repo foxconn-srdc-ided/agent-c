@@ -11,6 +11,15 @@ import worker
 
 
 class WorkerModelTests(unittest.TestCase):
+    def test_amendment_requires_concrete_feedback(self):
+        payload = {"stage": "A_B", "feedback": "JSON 金額 Decimal 與錯誤行為"}
+        self.assertFalse(worker.valid_proposal("交付範圍、驗收條件、依據資料", payload))
+        self.assertFalse(worker.valid_proposal("足夠長的空泛內容" * 20, payload))
+        complete = ('交付範圍：CSV 統計 CLI。驗收條件：Decimal 內部運算，JSON 金額為兩位小數字串，'
+                    '只有標頭輸出 "0.00"；缺欄位及非法金額輸出明確錯誤並使用非零退出碼。'
+                    '依據資料：category、amount 欄位；正常、負金額、空白分類等案例。')
+        self.assertTrue(worker.valid_proposal(complete, payload))
+
     def test_falls_back_to_structured_response(self):
         with patch.object(worker, "model_once", side_effect=worker.ModelFormatError("bad format")), \
              patch.object(worker, "model_json_mode", return_value={"text": "criteria"}) as fallback:
