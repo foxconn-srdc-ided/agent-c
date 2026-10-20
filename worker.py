@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import urllib.error
+import urllib.request
 
 ORG = "foxconn-srdc-ided"
 CENTRE = f"{ORG}/agent-collaboration"
@@ -98,8 +100,42 @@ def model_once(prompt: str, required: tuple[str, ...]) -> dict:
 def model(prompt: str, required: tuple[str, ...]) -> dict:
     try:
         return model_once(prompt, required)
-    except ModelFormatError:
-        return model_once(prompt + "\n請只輸出一個 JSON 物件，頂層必須含有：" + ", ".join(required) + "。不要其他文字。", required)
+    except RuntimeError:
+        print("OpenCode response unavailable; using Model Studio JSON mode", file=sys.stderr)
+        return model_json_mode(prompt, required)
+
+
+def model_json_mode(prompt: str, required: tuple[str, ...]) -> dict:
+    key = os.environ.get("MODEL_STUDIO_API_KEY")
+    base = os.environ.get("MODEL_STUDIO_BASE_URL")
+    if not key or not base:
+        raise RuntimeError("Model Studio endpoint or key missing")
+    request = urllib.request.Request(
+        base.rstrip("/") + "/chat/completions",
+        data=json.dumps({"model": "qwen3-coder-flash-2025-07-28",
+                         "messages": [{"role": "user", "content": prompt}],
+                         "response_format": {"type": "json_object"},
+                         "max_tokens": 8192 if "files" in required else 2048}).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read(10000))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            detail = {}
+        raise RuntimeError(f"Model Studio HTTP {exc.code}: {safe_error(detail)}") from exc
+    choice = result.get("choices", [{}])[0]
+    if choice.get("finish_reason") != "stop":
+        raise ModelFormatError(f"Model Studio response incomplete: {choice.get('finish_reason')}")
+    try:
+        value = json.loads(choice.get("message", {}).get("content") or "")
+    except json.JSONDecodeError as exc:
+        raise ModelFormatError("Model Studio JSON mode returned invalid JSON") from exc
+    if not isinstance(value, dict) or any(field not in value for field in required):
+        raise ModelFormatError(f"Model Studio JSON mode missing {required}")
+    return value
 
 
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
