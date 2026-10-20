@@ -58,7 +58,7 @@ def model_once(prompt: str, required: tuple[str, ...]) -> dict:
     if not env.get("MODEL_STUDIO_API_KEY") or not env.get("MODEL_STUDIO_BASE_URL"):
         raise RuntimeError("Model Studio endpoint or key missing")
     raw = command("opencode", "run", "--pure", "--format", "json", "--model",
-                  "model-studio/qwen3-coder-flash-2025-07-28", prompt, cwd=ROOT, env=env)
+                  "model-studio/qwen3-coder-flash-2025-07-28", prompt, cwd=ROOT, env=env, timeout=90)
     messages = {}
     for line in raw.splitlines():
         try:
@@ -100,7 +100,7 @@ def model_once(prompt: str, required: tuple[str, ...]) -> dict:
 def model(prompt: str, required: tuple[str, ...]) -> dict:
     try:
         return model_once(prompt, required)
-    except RuntimeError:
+    except (RuntimeError, subprocess.TimeoutExpired):
         print("OpenCode response unavailable; using Model Studio JSON mode", file=sys.stderr)
         return model_json_mode(prompt, required)
 
