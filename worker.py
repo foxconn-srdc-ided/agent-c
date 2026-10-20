@@ -22,6 +22,10 @@ class SelfCheckError(RuntimeError):
     pass
 
 
+class UpstreamDefect(RuntimeError):
+    pass
+
+
 def command(*args: str, cwd: Path | None = None, env: dict | None = None, data: str | None = None,
             timeout: int = 1200) -> str:
     result = subprocess.run(args, cwd=cwd, env=env, input=data, text=True,
@@ -90,12 +94,18 @@ def context(payload: dict) -> str:
     for item in sorted(files.glob("*")):
         if item.is_file() and item.stat().st_size < 100_000:
             pieces.append(f"### {item.name}\n{item.read_text(errors='replace')}")
+    if payload.get("prior_b_sha"):
+        prior_b = clone_at("agent-b", payload["prior_b_sha"], payload["run_id"])
+        for item in sorted((prior_b / "deliverables" / payload["run_id"]).glob("*")):
+            if item.is_file() and item.stat().st_size < 100_000:
+                pieces.append(f"### prior B {item.name}\n{item.read_text(errors='replace')}")
     return "\n\n".join(pieces)
 
 
 def produce(payload: dict, source: str) -> dict:
     prompt = (f"你是 Agent {ROLE}。本輪 {payload['stage']}，協議 v{payload['version']}。"
               f"任務：{payload['task']}\n協議：{payload['agreement']}\n上游固定版本內容：\n{source}\n"
+              f"原已准收協議（不得削弱）：{payload.get('original_agreement', '')}\n"
               f"退件原因：{payload.get('feedback', '')}\n"
               f"只輸出 JSON，格式 {{\"files\": {{filename: content}}, \"self_check\": string}}。"
               f"files 必須剛好包含 {sorted(FILES[ROLE])}。內容使用繁體中文說明；程式使用 Python 標準函式庫。"
@@ -134,14 +144,26 @@ def produce(payload: dict, source: str) -> dict:
                                 cwd=folder, capture_output=True, text=True, timeout=120)
         evidence += f"\nB tests rerun exit={result.returncode}:\n{result.stderr[-3000:]}"
         if result.returncode:
-            raise SelfCheckError("C rerun failed: " + result.stderr[-600:])
+            raise UpstreamDefect("C rerun of B tests failed: " + result.stderr[-600:])
+        if len(re.findall(r"\bdef\s+test_", (target / "test_acceptance.py").read_text())) < 6:
+            raise SelfCheckError("C independent suite needs six separate scenario tests")
         env = os.environ.copy()
         env["B_RESULT_DIR"] = str(folder)
         own = subprocess.run(["python3", "-m", "unittest", "-v", "test_acceptance"],
                              cwd=target, env=env, capture_output=True, text=True, timeout=120)
         evidence += f"\nC independent tests exit={own.returncode}:\n{own.stderr[-3000:]}"
         if own.returncode:
-            raise SelfCheckError("C independent tests failed: " + own.stderr[-600:])
+            diagnosis = model("你是 Agent C。獨立測試失敗，判斷缺陷屬於 B 實作或 C 測試本身。"
+                              "只回 JSON：{\"owner\": \"B 或 C\", \"reason\": \"具體理由\"}。\n"
+                              f"B 程式：\n{(folder / 'csv_stats.py').read_text()[:20000]}\n"
+                              f"C 測試：\n{(target / 'test_acceptance.py').read_text()[:20000]}\n"
+                              f"失敗輸出：\n{own.stderr[-3000:]}")
+            reason = f"{diagnosis.get('reason', '')}\n{own.stderr[-600:]}"
+            if diagnosis.get("owner") == "B":
+                raise UpstreamDefect(reason)
+            if diagnosis.get("owner") == "C":
+                raise SelfCheckError(reason)
+            raise RuntimeError("Unable to classify independent test failure")
     command("git", "add", "deliverables", cwd=ROOT)
     command("git", "-c", "user.name=agent-flow[bot]", "-c", "user.email=agent-flow@users.noreply.github.com",
             "commit", "-m", f"{ROLE} deliverable {payload['run_id']} attempt {payload['attempt']}", cwd=ROOT)
@@ -161,6 +183,7 @@ def main() -> None:
     if p["action"] in {"propose", "amend"}:
         value = model(f"你是 Agent {ROLE}，提出可核對交接協議。任務：{p['task']}。"
                       f"上游成果：{source}\n前版協議：{p['agreement']}\n回饋：{p.get('feedback', '')}\n"
+                      f"原已准收協議（修正卡不得削弱）：{p.get('original_agreement', '')}\n"
                       "只回 JSON：{\"text\": \"交付範圍、驗收條件、依據資料\"}。")
         report = {"text": value["text"]}
     elif p["action"] == "agree":
@@ -195,7 +218,8 @@ if __name__ == "__main__":
             event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
             payload = event.get("client_payload", {})
             if payload.get("run_id"):
-                action = "selfcheck_failed" if isinstance(exc, SelfCheckError) else "failed"
+                action = ("upstream_defect" if isinstance(exc, UpstreamDefect) else
+                          "selfcheck_failed" if isinstance(exc, SelfCheckError) else "failed")
                 send(payload, {"action": action, "failed_action": payload.get("action", ""),
                                "text": str(exc)[-700:]})
         except Exception:

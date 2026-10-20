@@ -32,6 +32,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -45,8 +46,8 @@ jobs:
           MODEL_STUDIO_BASE_URL: ${{ vars.MODEL_STUDIO_BASE_URL }}
         run: |
           if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
-            opencode run --pure --format json --model model-studio/qwen3-coder-flash-2025-07-28 '請只回覆 JSON：{"ok":true}；若可使用工具，讀取 README.md 標題後回覆。' > smoke.jsonl
-            python3 -c 'import json; data=[json.loads(x) for x in open("smoke.jsonl")]; assert any(x.get("type")=="text" for x in data)'
+            opencode run --pure --format json --model model-studio/qwen3-coder-flash-2025-07-28 '請先用 read 工具讀取 README.md，再以 JSON 回覆其中的標題與 ok=true。' > smoke.jsonl
+            python3 -c 'import json; data=[json.loads(x) for x in open("smoke.jsonl")]; assert any(x.get("type")=="tool_use" and x.get("part",{}).get("state",{}).get("status")=="completed" for x in data); assert any(x.get("type")=="text" for x in data)'
           else
             python3 worker.py
           fi
