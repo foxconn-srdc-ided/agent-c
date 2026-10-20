@@ -27,6 +27,10 @@ class UpstreamDefect(RuntimeError):
     pass
 
 
+class ModelFormatError(RuntimeError):
+    pass
+
+
 def safe_error(value: object) -> str:
     message = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
     for name in ("MODEL_STUDIO_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"):
@@ -45,7 +49,7 @@ def command(*args: str, cwd: Path | None = None, env: dict | None = None, data: 
     return result.stdout.strip()
 
 
-def model(prompt: str, required: tuple[str, ...]) -> dict:
+def model_once(prompt: str, required: tuple[str, ...]) -> dict:
     env = os.environ.copy()
     for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN", "CROSS_REPO_TOKEN"):
         env.pop(name, None)
@@ -78,15 +82,24 @@ def model(prompt: str, required: tuple[str, ...]) -> dict:
             if isinstance(value, dict):
                 candidates.append((message_index, end, end - index, value))
     if not candidates:
-        raise RuntimeError("Model returned no JSON")
+        raise ModelFormatError(f"Model returned no JSON; messages={len(messages)}; "
+                               f"text parts={sum(map(len, messages.values()))}; "
+                               f"text length={sum(len(part) for parts in messages.values() for part in parts)}")
     matching = [item for item in candidates if all(key in item[3] for key in required)]
     if not matching:
         errors = [item[3] for item in candidates if "error" in item[3] or item[3].get("type") == "error"]
         if errors:
             raise RuntimeError(f"Model error: {safe_error(errors[-1])}")
         keys = sorted({key for item in candidates for key in item[3]})
-        raise RuntimeError(f"Model response missing {required}; available keys: {keys[:20]}")
+        raise ModelFormatError(f"Model response missing {required}; available keys: {keys[:20]}")
     return max(matching, key=lambda item: item[:3])[3]
+
+
+def model(prompt: str, required: tuple[str, ...]) -> dict:
+    try:
+        return model_once(prompt, required)
+    except ModelFormatError:
+        return model_once(prompt + "\n請只輸出一個 JSON 物件，頂層必須含有：" + ", ".join(required) + "。不要其他文字。", required)
 
 
 def clone_at(repo: str, sha: str, run_id: str) -> Path:
