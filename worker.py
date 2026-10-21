@@ -171,6 +171,11 @@ def claims_missing_spec(text: str) -> bool:
                           r"SPEC\.md.{0,30}(?:不存在|未提供|未找到|缺乏)", text))
 
 
+def claims_missing_b_files(text: str) -> bool:
+    return bool(re.search(r"(?:找不到|未找到|不存在|未提供|缺乏|沒有).{0,40}(?:這些檔案|相關檔案|csv_stats\.py|test_csv_stats\.py|README\.md)|"
+                          r"(?:csv_stats\.py|test_csv_stats\.py|README\.md).{0,40}(?:不存在|未提供|未找到|缺乏)", text))
+
+
 def invents_unrequired_cases(text: str) -> bool:
     return any(item in text for item in ("空檔案", "多餘欄位", "跨平台", "不同平台"))
 
@@ -399,6 +404,11 @@ def main() -> None:
                       "不可宣稱 CLI 已實作、已執行測試或檢查不存在的檔案。"
                       "只回 JSON：{\"passed\": boolean, \"text\": \"逐項結果與證據\"}。")
         value = model(review_prompt, ("passed", "text"))
+        if p["stage"] == "B_C" and claims_missing_b_files(value["text"]):
+            value = model_json_mode(review_prompt + "\n你誤判了：上方「成果」已提供三個檔案的內容；"
+                                    "請根據這些內容審查，不要查看本機工作目錄。", ("passed", "text"))
+            if claims_missing_b_files(value["text"]):
+                raise ModelFormatError("Review ignored the provided B files")
         if p["stage"] == "A_B" and "### SPEC.md" in source and claims_missing_spec(value["text"]):
             value = model_json_mode(review_prompt + "\n你誤判了：成果文字以 ### SPEC.md 開頭，請依其內容重新審查。",
                                     ("passed", "text"))
