@@ -145,6 +145,10 @@ def valid_proposal(text: object, payload: dict) -> bool:
         return False
     if payload["stage"] == "A_B" and payload.get("feedback"):
         return all(item in text for item in ('Decimal', 'JSON', '"0.00"', '缺欄位', '非法金額', '非零'))
+    if payload["stage"] == "C_HUMAN":
+        required = ("test_acceptance.py", "REPORT.md", "正常", "負金額", "只有標頭", "缺欄位",
+                    "空白分類", "非法金額", "固定 SHA")
+        return all(item in text for item in required) and "實現 Python 標準函式庫 CSV 統計 CLI 工具" not in text
     return True
 
 
@@ -367,6 +371,11 @@ def main() -> None:
                       "只回一個 JSON 物件，鍵名為 text；值須是完整、具體、可驗收的協議，包含交付範圍、"
                       "驗收條件及依據資料。改約時保留前版有效條件，逐項納入回饋。"
                       "不得回傳標題列表、範本或佔位文字。")
+        if p["stage"] == "C_HUMAN":
+            prompt += ("此階段 B 的 csv_stats.py 已在固定 SHA 驗收；C 的工作是獨立交付 test_acceptance.py"
+                       " 與 REPORT.md，不是重新實作 CLI。協議須指定以前一棒 B 的固定 SHA 為基準，"
+                       "獨立測正常、負金額、只有標頭、缺欄位、空白分類、非法金額六種案例，"
+                       "重跑 B 測試，記錄命令、結果與需求覆蓋；失敗須區分 B 缺陷或 C 測試錯誤。")
         value = model(prompt, ("text",))
         if not valid_proposal(value["text"], p):
             value = model_json_mode(prompt + "\n上一版回答不符合協議內容或未完整納入回饋；請重寫。", ("text",))

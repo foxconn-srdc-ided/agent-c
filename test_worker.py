@@ -46,6 +46,18 @@ class WorkerModelTests(unittest.TestCase):
                     '依據資料：category、amount 欄位；正常、負金額、空白分類等案例。')
         self.assertTrue(worker.valid_proposal(complete, payload))
 
+    def test_final_agreement_requires_c_test_suite_and_report(self):
+        payload = {"stage": "C_HUMAN"}
+        wrong = ("交付範圍：實現 Python 標準函式庫 CSV 統計 CLI 工具。"
+                 "驗收條件：正常、負金額、只有標頭、缺欄位、空白分類、非法金額測試。"
+                 "依據資料：B 的固定 SHA。輸出 test_acceptance.py 和 REPORT.md。")
+        self.assertFalse(worker.valid_proposal(wrong, payload))
+        correct = ("交付範圍：C 依 B 已驗收的固定 SHA，交付 test_acceptance.py 與 REPORT.md，"
+                   "獨立驗證現有 CSV 統計 CLI；不重新實作。驗收條件：正常、負金額、只有標頭、"
+                   "缺欄位、空白分類、非法金額六種測試皆通過；重跑 B 測試，報告記錄命令、"
+                   "結果和需求覆蓋。依據資料：A 規格、B 的固定 SHA 與已准收交付。")
+        self.assertTrue(worker.valid_proposal(correct, payload))
+
     def test_falls_back_to_structured_response(self):
         with patch.object(worker, "model_once", side_effect=worker.ModelFormatError("bad format")), \
              patch.object(worker, "model_json_mode", return_value={"text": "criteria"}) as fallback:
